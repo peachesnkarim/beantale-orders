@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from "react";
+import { db } from "./firebase";
+import { collection, doc, setDoc, deleteDoc, onSnapshot } from "firebase/firestore";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 const PRODUCTS = [
@@ -565,17 +567,31 @@ export default function App() {
   const [showF, setShowF]     = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
 
-  // ── Persistence (browser localStorage — per-device/browser) ───────────────
+  // ── Persistence (Firestore — shared across all devices/browsers) ──────────
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("bt_v2");
-      if (raw) {
-        const d = JSON.parse(raw);
-        if (d.orders)    setOrders(d.orders);
-        if (d.customers) setCustomers(d.customers);
+    const unsubOrders = onSnapshot(
+      collection(db, "orders"),
+      snap => {
+        const list = snap.docs.map(d => d.data());
+        list.sort((a, b) => new Date(b.ts) - new Date(a.ts));
+        setOrders(list);
+        setLoaded(true);
+      },
+      err => {
+        console.error("Firestore orders sync failed:", err);
+        setLoaded(true);
       }
-    } catch {}
-    setLoaded(true);
+    );
+
+    const unsubCustomers = onSnapshot(
+      doc(db, "meta", "customers"),
+      snap => {
+        if (snap.exists() && Array.isArray(snap.data().list)) {
+          setCustomers(snap.data().list);
+        }
+      },
+      err => console.error("Firestore customers sync failed:", err)
+    );
 
     // Lock layout to viewport
     const style = document.createElement("style");
@@ -586,14 +602,9 @@ export default function App() {
     link.href = "https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;700&family=DM+Sans:wght@300;400;500;600;700&display=swap";
     link.rel = "stylesheet";
     document.head.appendChild(link);
-  }, []);
 
-  useEffect(() => {
-    if (!loaded) return;
-    try {
-      localStorage.setItem("bt_v2", JSON.stringify({ orders, customers }));
-    } catch {}
-  }, [orders, customers, loaded]);
+    return () => { unsubOrders(); unsubCustomers(); };
+  }, []);
 
   // Close customer dropdown on outside click
   useEffect(() => {
@@ -612,12 +623,18 @@ export default function App() {
     setFormErrors({});
 
     if (!customers.includes(form.customer)) {
-      setCustomers(p => [...p, form.customer].sort((a, b) => a.localeCompare(b)));
+      const updatedCustomers = [...customers, form.customer].sort((a, b) => a.localeCompare(b));
+      setDoc(doc(db, "meta", "customers"), { list: updatedCustomers }).catch(err =>
+        console.error("Failed to save customer:", err)
+      );
     }
     if (editId) {
-      setOrders(p => p.map(o => o.id === editId
-        ? { ...o, customer: form.customer, items: active, notes: form.notes }
-        : o));
+      const existing = orders.find(o => o.id === editId) || {};
+      const updated = { ...existing, customer: form.customer, items: active, notes: form.notes };
+      setDoc(doc(db, "orders", editId), updated).catch(err => {
+        console.error("Failed to save order:", err);
+        showToast("Couldn't save — check your connection");
+      });
       setForm(emptyForm());
       setEditId(null);
       setTab(prevTab);
@@ -631,7 +648,10 @@ export default function App() {
         notes: form.notes,
         status: "open",
       };
-      setOrders(p => [order, ...p]);
+      setDoc(doc(db, "orders", order.id), order).catch(err => {
+        console.error("Failed to save order:", err);
+        showToast("Couldn't save — check your connection");
+      });
       setForm(emptyForm());
       setTab("open");
       showToast("Order saved");
@@ -655,19 +675,25 @@ export default function App() {
 
   const deleteOrder = id => {
     if (!window.confirm("Delete this order? This can't be undone.")) return;
-    setOrders(p => p.filter(o => o.id !== id));
+    deleteDoc(doc(db, "orders", id)).catch(err => {
+      console.error("Failed to delete order:", err);
+      showToast("Couldn't delete — check your connection");
+    });
     setDetail(p => p?.id === id ? null : p);
   };
 
   const markPacked = (id, packedItems) => {
-    setOrders(p => p.map(o => {
-      if (o.id !== id) return o;
-      const items = packedItems || o.items.map(it => ({ ...it, packedRetailQty: it.retailQty, packedKgQty: it.kgQty }));
-      const partial = items.some(it =>
-        +(it.packedRetailQty || 0) < +(it.retailQty || 0) || +(it.packedKgQty || 0) < +(it.kgQty || 0)
-      );
-      return { ...o, status: "packed", partial, items, packedTs: new Date().toISOString() };
-    }));
+    const o = orders.find(x => x.id === id);
+    if (!o) return;
+    const items = packedItems || o.items.map(it => ({ ...it, packedRetailQty: it.retailQty, packedKgQty: it.kgQty }));
+    const partial = items.some(it =>
+      +(it.packedRetailQty || 0) < +(it.retailQty || 0) || +(it.packedKgQty || 0) < +(it.kgQty || 0)
+    );
+    const updated = { ...o, status: "packed", partial, items, packedTs: new Date().toISOString() };
+    setDoc(doc(db, "orders", id), updated).catch(err => {
+      console.error("Failed to mark order packed:", err);
+      showToast("Couldn't save — check your connection");
+    });
     setDetail(p => p?.id === id ? null : p);
   };
 
