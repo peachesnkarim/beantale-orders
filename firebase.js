@@ -2,15 +2,18 @@ import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
 // Beantale Orders — shared Firestore backend.
-// This config is the public web-app config (not a secret key) and is safe to ship in client code.
-// Data access is governed by Firestore security rules set in the Firebase console.
+// This config is the public web-app config (not a secret key) and is safe to ship in client code —
+// Firebase's actual access boundary is enforced by Firestore security rules, not by hiding this value.
+// It's still pulled from env vars (set in .env locally, and in Vercel's Project Settings → Environment
+// Variables for deploys) so the literal key string isn't checked into source control / flagged by
+// secret scanners.
 const firebaseConfig = {
-  apiKey: "AIzaSyACYy7pCnnIvflmQ2lpPcL388SM38bXM_A",
-  authDomain: "beantale-orders.firebaseapp.com",
-  projectId: "beantale-orders",
-  storageBucket: "beantale-orders.firebasestorage.app",
-  messagingSenderId: "738309930044",
-  appId: "1:738309930044:web:eb1015c814578589ac9739",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
 const app = initializeApp(firebaseConfig);

@@ -44,6 +44,18 @@ const fmtDay = iso => {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 };
 
+// Short relative time ("5m ago", "2h ago") for anything within the last 24h
+// on today's date; falls back to the absolute "Day, time" format beyond that
+// so older orders still get a precise, unambiguous timestamp.
+const fmtRelative = iso => {
+  const d = new Date(iso);
+  const mins = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  if (d.toDateString() === new Date().toDateString()) return `${Math.floor(mins / 60)}h ago`;
+  return `${fmtDay(iso)}, ${fmtTime(iso)}`;
+};
+
 const toLines = items =>
   items.flatMap(it => {
     const r = [];
@@ -84,6 +96,8 @@ const emptyForm = () => ({
 const ink    = "#1A0800";
 const cream  = "#FDF8F2";
 const muted  = "#A08C7C";
+const label  = "#7A6754"; // darker than `muted` — used for functional section labels (e.g. "Notes", "Order items") that need better contrast for legibility
+const labelInk = "#7A6354"; // darker than `muted` — used for functional label text to meet WCAG AA contrast
 const border = "#EDE5DC";
 const accent = "#C8844A";
 const green  = "#15803D";
@@ -94,6 +108,71 @@ const red    = "#B91C1C";
 const redBg  = "#FEE2E2";
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
+
+// In-DOM confirmation dialog — replaces window.confirm() so the action is
+// reachable by both real users and automated/assistive tooling, can be
+// styled consistently, and supports Escape-to-cancel.
+function ConfirmDialog({ open, title, message, confirmLabel = "Confirm", danger, onConfirm, onCancel }) {
+  useEffect(() => {
+    if (!open) return;
+    const fn = e => { if (e.key === "Escape") onCancel(); };
+    document.addEventListener("keydown", fn);
+    return () => document.removeEventListener("keydown", fn);
+  }, [open, onCancel]);
+
+  if (!open) return null;
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, zIndex: 500,
+        background: "rgba(26,8,0,0.45)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 24,
+      }}
+      onClick={onCancel}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: "100%", maxWidth: 340, background: cream,
+          borderRadius: 16, padding: "22px 20px",
+          boxShadow: "0 20px 50px rgba(26,8,0,0.3)",
+        }}
+      >
+        {title && (
+          <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 18, fontWeight: 700, color: ink, marginBottom: 8 }}>
+            {title}
+          </div>
+        )}
+        <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, color: ink, lineHeight: 1.5, marginBottom: 20 }}>
+          {message}
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            onClick={onCancel}
+            style={{
+              flex: 1, padding: "12px 0", background: "transparent", border: `1.5px solid ${border}`,
+              borderRadius: 10, color: ink, fontFamily: "'DM Sans', sans-serif",
+              fontWeight: 700, fontSize: 13, letterSpacing: "0.02em", cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            style={{
+              flex: 1, padding: "12px 0", background: danger ? red : accent, border: "none",
+              borderRadius: 10, color: "#fff", fontFamily: "'DM Sans', sans-serif",
+              fontWeight: 700, fontSize: 13, letterSpacing: "0.02em", cursor: "pointer",
+            }}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function Badge({ status, partial }) {
   // Open orders show no badge — every card in that list is open, so it adds no information.
@@ -116,9 +195,10 @@ function Badge({ status, partial }) {
 
 function Stepper({ value, onChange, width }) {
   const n = +value || 0;
+  const displayValue = value === "" || value === undefined || value === null ? "" : String(value);
   return (
     <div style={{
-      display: "flex", alignItems: "center", justifyContent: "space-between",
+      display: "flex", alignItems: "center",
       background: "#FDFAF7", border: `1.5px solid ${border}`, borderRadius: 6,
       height: 30, width: width || "100%", boxSizing: "border-box",
     }}>
@@ -126,24 +206,34 @@ function Stepper({ value, onChange, width }) {
         type="button"
         onClick={() => onChange(String(Math.max(0, n - 1)))}
         style={{
-          width: 24, height: "100%", border: "none", background: "transparent",
+          width: 22, height: "100%", border: "none", background: "transparent",
           fontSize: 16, color: ink, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+          flexShrink: 0,
         }}
       >
         −
       </button>
-      <span style={{
-        fontSize: 14, fontWeight: 600, color: ink, fontFamily: "'DM Sans', sans-serif",
-        minWidth: 16, textAlign: "center",
-      }}>
-        {n}
-      </span>
+      <input
+        type="text"
+        inputMode="numeric"
+        pattern="[0-9]*"
+        value={displayValue}
+        onChange={e => onChange(e.target.value.replace(/[^0-9]/g, ""))}
+        onBlur={e => { if (e.target.value === "") onChange("0"); }}
+        onFocus={e => e.target.select()}
+        style={{
+          flex: 1, minWidth: 0, border: "none", background: "transparent", outline: "none",
+          fontSize: 14, fontWeight: 600, color: ink, fontFamily: "'DM Sans', sans-serif",
+          textAlign: "center", padding: 0,
+        }}
+      />
       <button
         type="button"
         onClick={() => onChange(String(n + 1))}
         style={{
-          width: 24, height: "100%", border: "none", background: "transparent",
+          width: 22, height: "100%", border: "none", background: "transparent",
           fontSize: 16, color: ink, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+          flexShrink: 0,
         }}
       >
         +
@@ -152,18 +242,19 @@ function Stepper({ value, onChange, width }) {
   );
 }
 
-function Logo() {
-  const petal = "M50 50 C38 38 35 15 50 5 C65 15 62 38 50 50 Z";
+function Logo({ onClick }) {
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-      <svg width="15" height="15" viewBox="0 0 100 100" style={{ flexShrink: 0 }}>
-        <g fill="#C8844A">
-          <path d={petal} />
-          <path d={petal} transform="rotate(120 50 50)" />
-          <path d={petal} transform="rotate(240 50 50)" />
+    <span
+      onClick={onClick}
+      style={{ display: "inline-flex", alignItems: "center", gap: 7, cursor: onClick ? "pointer" : "default" }}
+    >
+      <svg width="18" height="18" viewBox="0 0 100 100" style={{ flexShrink: 0 }}>
+        <g fill={ink}>
+          <path d="M52 50 C22 50 8 28 24 6 C48 20 52 36 52 50 Z" />
+          <circle cx="74" cy="74" r="18" />
         </g>
       </svg>
-      <span style={{ fontSize: 11, color: "#C8844A", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, letterSpacing: "0.12em" }}>BEANTALE</span>
+      <span style={{ fontSize: 15, color: ink, fontFamily: "'DM Sans', sans-serif", fontWeight: 600, letterSpacing: "0" }}>beantale</span>
     </span>
   );
 }
@@ -195,18 +286,25 @@ function OrderCard({ order, onMark, onClick, selectable, selected, onToggleSelec
         <Badge status={order.status} partial={order.partial} />
       </div>
       <div style={{ fontSize: 12, color: muted, fontFamily: "'DM Sans', sans-serif", marginBottom: 8 }}>
-        Ordered {fmtDay(order.ts)}, {fmtTime(order.ts)}
-        {isPacked && order.packedTs && <> · Packed {fmtDay(order.packedTs)}, {fmtTime(order.packedTs)}</>}
+        Ordered {fmtRelative(order.ts)}
+        {isPacked && order.packedTs && <> · Packed {fmtRelative(order.packedTs)}</>}
       </div>
       <div style={{ fontSize: 13, color: "#4A3728", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.6, marginBottom: isPacked ? 4 : 12 }}>
         {lines.slice(0, 2).map((l, i) => <div key={i}>{l}</div>)}
-        {lines.length > 2 && <div style={{ color: muted }}>+{lines.length - 2} more</div>}
+        {lines.length > 2 && (
+          <div
+            onClick={e => { e.stopPropagation(); onClick(); }}
+            style={{ color: muted, textDecoration: "underline", cursor: "pointer" }}
+          >
+            +{lines.length - 2} more
+          </div>
+        )}
       </div>
       {!isPacked ? (
         <button
           onClick={e => {
             e.stopPropagation();
-            if (window.confirm(`Mark all items for ${order.customer} as fully packed?`)) onMark(order.id);
+            onClick();
           }}
           style={{
             width: "100%", padding: "9px 0", border: "none",
@@ -224,12 +322,19 @@ function OrderCard({ order, onMark, onClick, selectable, selected, onToggleSelec
   );
 }
 
-function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
+function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop, requestConfirm }) {
   const [packing, setPacking] = useState(false);
   const [draft, setDraft]     = useState([]);
+  const [confirming, setConfirming] = useState(false);
+  const confirmingRef = useRef(false);
+  const touchStartY = useRef(null);
+  const [dragY, setDragY] = useState(0);
 
   useEffect(() => {
     setPacking(false);
+    confirmingRef.current = false;
+    setConfirming(false);
+    setDragY(0);
     if (order) {
       setDraft(order.items.map(it => ({
         ...it,
@@ -239,10 +344,35 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
     }
   }, [order?.id]);
 
+  // Escape dismisses the drawer (standard modal convention).
+  useEffect(() => {
+    if (!order) return;
+    const fn = e => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", fn);
+    return () => document.removeEventListener("keydown", fn);
+  }, [order, onClose]);
+
   if (!order) return null;
   const isPacked = order.status === "packed";
 
+  // Swipe-down-to-dismiss on the drag handle / sheet — the handle pill visually
+  // implies this gesture, so make it actually work instead of being decorative.
+  const onHandleTouchStart = e => { touchStartY.current = e.touches[0].clientY; };
+  const onHandleTouchMove = e => {
+    if (touchStartY.current == null) return;
+    const dy = e.touches[0].clientY - touchStartY.current;
+    if (dy > 0) setDragY(dy);
+  };
+  const onHandleTouchEnd = () => {
+    if (dragY > 80) onClose();
+    else setDragY(0);
+    touchStartY.current = null;
+  };
+
   const confirmPack = () => {
+    if (confirmingRef.current) return;
+    confirmingRef.current = true;
+    setConfirming(true);
     onMark(order.id, draft);
     setPacking(false);
   };
@@ -264,10 +394,17 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
           maxHeight: "88vh", overflowY: "auto",
           padding: "0 20px 44px",
           marginBottom: isDesktop ? 40 : 0,
+          transform: dragY ? `translateY(${dragY}px)` : undefined,
+          transition: dragY ? "none" : "transform 0.18s ease",
         }}
       >
-        {/* Handle */}
-        <div style={{ textAlign: "center", padding: "14px 0 18px" }}>
+        {/* Handle — drag down to dismiss */}
+        <div
+          style={{ textAlign: "center", padding: "14px 0 18px", cursor: "grab", touchAction: "none" }}
+          onTouchStart={onHandleTouchStart}
+          onTouchMove={onHandleTouchMove}
+          onTouchEnd={onHandleTouchEnd}
+        >
           <div style={{ width: 36, height: 4, background: border, borderRadius: 2, display: "inline-block" }} />
         </div>
 
@@ -276,8 +413,8 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
           <div>
             <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 20, fontWeight: 700, color: ink }}>{order.customer}</div>
             <div style={{ fontSize: 12, color: muted, fontFamily: "'DM Sans', sans-serif", marginTop: 2 }}>
-              Ordered {fmtDay(order.ts)}, {fmtTime(order.ts)}
-              {isPacked && order.packedTs && <><br />Packed {fmtDay(order.packedTs)}, {fmtTime(order.packedTs)}</>}
+              Ordered {fmtRelative(order.ts)}
+              {isPacked && order.packedTs && <><br />Packed {fmtRelative(order.packedTs)}</>}
             </div>
           </div>
           <Badge status={order.status} partial={order.partial} />
@@ -291,7 +428,7 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
 
         {packing ? (
           <>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: muted, fontFamily: "'DM Sans', sans-serif", marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: label, fontFamily: "'DM Sans', sans-serif", marginBottom: 10 }}>
               Confirm packed quantities
             </div>
             {draft.map((it, i) => (
@@ -335,30 +472,34 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
             <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
               <button
                 onClick={() => setPacking(false)}
+                disabled={confirming}
                 style={{
                   flex: 1, padding: "13px 0", background: "transparent", border: `1.5px solid ${border}`,
                   borderRadius: 10, color: ink, fontFamily: "'DM Sans', sans-serif",
-                  fontWeight: 700, fontSize: 13, letterSpacing: "0.02em", cursor: "pointer",
+                  fontWeight: 700, fontSize: 13, letterSpacing: "0.02em",
+                  cursor: confirming ? "default" : "pointer", opacity: confirming ? 0.6 : 1,
                 }}
               >
                 Cancel
               </button>
               <button
                 onClick={confirmPack}
+                disabled={confirming}
                 style={{
                   flex: 1, padding: "13px 0", background: accent, border: "none",
                   borderRadius: 10, color: "#fff", fontFamily: "'DM Sans', sans-serif",
-                  fontWeight: 700, fontSize: 13, letterSpacing: "0.02em", cursor: "pointer",
+                  fontWeight: 700, fontSize: 13, letterSpacing: "0.02em",
+                  cursor: confirming ? "default" : "pointer", opacity: confirming ? 0.7 : 1,
                 }}
               >
-                Confirm
+                {confirming ? "Confirming…" : "Confirm"}
               </button>
             </div>
           </>
         ) : (
           <>
             {/* Items */}
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: muted, fontFamily: "'DM Sans', sans-serif", marginBottom: 10 }}>Order items</div>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: label, fontFamily: "'DM Sans', sans-serif", marginBottom: 10 }}>Order items</div>
             {order.items.map((it, i) => {
               const retailShort = isPacked && it.packedRetailQty !== undefined && +it.packedRetailQty !== +it.retailQty;
               const kgShort = isPacked && it.packedKgQty !== undefined && +it.packedKgQty !== +it.kgQty;
@@ -413,7 +554,7 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
             {/* Notes */}
             {order.notes && (
               <div style={{ marginTop: 16, padding: "12px 14px", background: "#F9F5EF", borderRadius: 8 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: muted, fontFamily: "'DM Sans', sans-serif", marginBottom: 4 }}>Notes</div>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: label, fontFamily: "'DM Sans', sans-serif", marginBottom: 4 }}>Notes</div>
                 <div style={{ fontSize: 13, color: ink, fontFamily: "'DM Sans', sans-serif", lineHeight: 1.5 }}>{order.notes}</div>
               </div>
             )}
@@ -423,9 +564,12 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
             {!isPacked ? (
               <>
                 <button
-                  onClick={() => {
-                    if (window.confirm(`Mark all items for ${order.customer} as fully packed?`)) onMark(order.id);
-                  }}
+                  onClick={() => requestConfirm({
+                    title: "Mark fully packed?",
+                    message: `Mark all items for ${order.customer} as fully packed?`,
+                    confirmLabel: "Mark packed",
+                    onConfirm: () => onMark(order.id),
+                  })}
                   style={{
                     width: "100%", padding: "15px 0", background: accent, border: "none",
                     borderRadius: 10, color: "#fff", fontFamily: "'DM Sans', sans-serif",
@@ -437,8 +581,8 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
                 <button
                   onClick={() => setPacking(true)}
                   style={{
-                    width: "100%", marginTop: 8, padding: "12px 0", background: "transparent",
-                    border: `1.5px solid ${border}`, borderRadius: 10, color: ink,
+                    width: "100%", marginTop: 8, padding: "11px 0", background: "none",
+                    border: "none", borderRadius: 10, color: muted,
                     fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 12,
                     letterSpacing: "0.02em", cursor: "pointer",
                   }}
@@ -483,11 +627,15 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
               </>
             )}
 
-            <div style={{ height: 1, background: border, margin: "14px 0 8px" }} />
+            <div style={{ height: 1, background: border, margin: "24px 0 12px" }} />
             <button
-              onClick={() => {
-                if (window.confirm(`Delete the order for ${order.customer}? This can't be undone.`)) onDelete(order.id);
-              }}
+              onClick={() => requestConfirm({
+                title: "Delete order?",
+                message: `Delete the order for ${order.customer}? This can't be undone.`,
+                confirmLabel: "Delete",
+                danger: true,
+                onConfirm: () => onDelete(order.id),
+              })}
               style={{
                 width: "100%", padding: "8px 0", background: "none", border: "none",
                 color: red, fontFamily: "'DM Sans', sans-serif",
@@ -551,11 +699,18 @@ export default function App() {
 
   // New order form
   const [form, setForm]       = useState(emptyForm());
+  const [originalForm, setOriginalForm] = useState(null); // snapshot of loaded values when editing, for accurate dirty-checking
   const [formErrors, setFormErrors] = useState({});
   const [editId, setEditId]   = useState(null);
   const [prevTab, setPrevTab] = useState("open");
   const [custDrop, setCustDrop] = useState(false);
   const custRef = useRef(null);
+  const [saving, setSaving]   = useState(false);
+
+  // In-DOM confirmation dialog state (replaces window.confirm — reachable by
+  // both real users and automated/assistive tooling, styleable, Escape-able).
+  const [confirmState, setConfirmState] = useState(null);
+  const requestConfirm = opts => setConfirmState(opts);
 
   // Packed filters
   const [search, setSearch]   = useState("");
@@ -613,14 +768,34 @@ export default function App() {
     return () => document.removeEventListener("mousedown", fn);
   }, []);
 
+  // Reset Packed Orders selection state whenever we leave that tab, so a stale
+  // checkbox/counter from a previous visit never carries over.
+  useEffect(() => {
+    if (tab !== "packed") setSelectedIds([]);
+  }, [tab]);
+
+  // Escape dismisses the New/Edit Order form (same path as the × button, so
+  // unsaved changes still prompt via the in-DOM confirm dialog).
+  useEffect(() => {
+    if (tab !== "new") return;
+    const fn = e => { if (e.key === "Escape") closeForm(); };
+    document.addEventListener("keydown", fn);
+    return () => document.removeEventListener("keydown", fn);
+  }, [tab, form, originalForm, editId]);
+
   // ── Actions ────────────────────────────────────────────────────────────────
+  const savingRef = useRef(false);
+
   const saveOrder = () => {
+    if (savingRef.current) return;
     const errors = {};
     if (!form.customer) errors.customer = "Please select or enter a customer name.";
     const active = form.items.filter(i => +i.retailQty > 0 || +i.kgQty > 0);
     if (!active.length) errors.items = "Please add at least one item to save this order.";
     if (Object.keys(errors).length) { setFormErrors(errors); return; }
     setFormErrors({});
+    savingRef.current = true;
+    setSaving(true);
 
     if (!customers.includes(form.customer)) {
       const updatedCustomers = [...customers, form.customer].sort((a, b) => a.localeCompare(b));
@@ -636,6 +811,7 @@ export default function App() {
         showToast("Couldn't save — check your connection");
       });
       setForm(emptyForm());
+      setOriginalForm(null);
       setEditId(null);
       setTab(prevTab);
       showToast("Changes saved");
@@ -656,25 +832,86 @@ export default function App() {
       setTab("open");
       showToast("Order saved");
     }
+    savingRef.current = false;
+    setSaving(false);
   };
 
   const startEdit = order => {
-    setForm({
+    const loaded = {
       customer: order.customer,
       items: PRODUCTS.map(p => {
         const match = order.items.find(i => i.id === p.id);
         return { ...p, retailQty: match ? match.retailQty : "", kgQty: match ? match.kgQty : "" };
       }),
       notes: order.notes || "",
-    });
+    };
+    setForm(loaded);
+    setOriginalForm(loaded);
     setEditId(order.id);
     setPrevTab(order.status === "packed" ? "packed" : "open");
     setDetail(null);
     setTab("new");
   };
 
+  // Close (×) / Escape handler for the New/Edit Order form — single source of
+  // truth so both paths share the same dirty-check + confirm-dialog behavior.
+  // For Edit Order, "dirty" is measured against the originally-loaded values
+  // (not "is anything non-empty", which was always true for an edit and made
+  // the discard prompt fire on every close, changed or not).
+  const closeForm = () => {
+    const isDirty = editId
+      ? JSON.stringify(form) !== JSON.stringify(originalForm)
+      : (!!form.customer || form.items.some(i => +i.retailQty > 0 || +i.kgQty > 0) || !!form.notes);
+    const wasEditing = !!editId;
+    const discard = () => {
+      setForm(emptyForm());
+      setOriginalForm(null);
+      setEditId(null);
+      setFormErrors({});
+      setTab(wasEditing ? prevTab : "open");
+    };
+    if (isDirty) {
+      requestConfirm({
+        title: "Discard changes?",
+        message: "Anything you've entered will be lost.",
+        confirmLabel: "Discard",
+        danger: true,
+        onConfirm: discard,
+      });
+    } else {
+      discard();
+    }
+  };
+
+  // Logo tap = "go home". From the New/Edit form, this shares the same
+  // dirty-check + discard-confirm path as the × button; from anywhere else
+  // it just switches to Open Orders.
+  const goHome = () => {
+    if (tab !== "new") { setTab("open"); return; }
+    const isDirty = editId
+      ? JSON.stringify(form) !== JSON.stringify(originalForm)
+      : (!!form.customer || form.items.some(i => +i.retailQty > 0 || +i.kgQty > 0) || !!form.notes);
+    const discard = () => {
+      setForm(emptyForm());
+      setOriginalForm(null);
+      setEditId(null);
+      setFormErrors({});
+      setTab("open");
+    };
+    if (isDirty) {
+      requestConfirm({
+        title: "Discard changes?",
+        message: "Anything you've entered will be lost.",
+        confirmLabel: "Discard",
+        danger: true,
+        onConfirm: discard,
+      });
+    } else {
+      discard();
+    }
+  };
+
   const deleteOrder = id => {
-    if (!window.confirm("Delete this order? This can't be undone.")) return;
     deleteDoc(doc(db, "orders", id)).catch(err => {
       console.error("Failed to delete order:", err);
       showToast("Couldn't delete — check your connection");
@@ -695,6 +932,7 @@ export default function App() {
       showToast("Couldn't save — check your connection");
     });
     setDetail(p => p?.id === id ? null : p);
+    showToast(partial ? "Order packed (partial)" : "Order packed");
   };
 
   const toggleSelect = id => {
@@ -709,12 +947,11 @@ export default function App() {
     const rows = [];
     orderList.forEach(o => {
       const dateStr = new Date(o.ts).toLocaleDateString("en-GB");
-      const packedDateStr = o.packedTs ? new Date(o.packedTs).toLocaleDateString("en-GB") : "";
       o.items.forEach(it => {
         const retailQty = o.status === "packed" && it.packedRetailQty !== undefined ? it.packedRetailQty : it.retailQty;
         const kgQty = o.status === "packed" && it.packedKgQty !== undefined ? it.packedKgQty : it.kgQty;
-        if (+it.retailQty > 0) rows.push(["", o.customer, dateStr, it.name, "250g", retailQty || 0, packedDateStr]);
-        if (+it.kgQty > 0)     rows.push(["", o.customer, dateStr, it.name, "1kg", kgQty || 0, packedDateStr]);
+        if (+it.retailQty > 0) rows.push(["", o.customer, dateStr, it.name, "250g", retailQty || 0]);
+        if (+it.kgQty > 0)     rows.push(["", o.customer, dateStr, it.name, "1kg", kgQty || 0]);
       });
     });
     const csv = rows.map(r => r.map(esc).join(",")).join("\n");
@@ -732,6 +969,10 @@ export default function App() {
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const openOrders = orders.filter(o => o.status === "open");
+
+  // Whether any Packed Orders filter has moved off its default — used to give
+  // the empty state a "match your filters" message + a one-tap way back.
+  const filtersActive = !!search || dateF !== "today" || productF !== "all" || sizeF !== "all";
 
   const packedOrders = orders.filter(o => {
     if (o.status !== "packed") return false;
@@ -771,7 +1012,7 @@ export default function App() {
 
   const sectionLabel = {
     fontSize: 11, fontWeight: 700, letterSpacing: "0.08em",
-    color: muted, fontFamily: "'DM Sans', sans-serif",
+    color: labelInk, fontFamily: "'DM Sans', sans-serif",
     display: "block", marginBottom: 6,
   };
 
@@ -797,7 +1038,7 @@ export default function App() {
         {tab === "open" && (
           <div style={{ padding: "0 16px" }}>
             <div style={{ paddingTop: 52, paddingBottom: 8 }}>
-              <div style={{ marginBottom: 2 }}><Logo /></div>
+              <div style={{ marginBottom: 2 }}><Logo onClick={goHome} /></div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
                 <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 700, color: ink }}>Open Orders</div>
                 {openOrders.length > 0 && (
@@ -836,18 +1077,10 @@ export default function App() {
         {tab === "new" && (
           <div style={{ padding: "0 16px 14px" }}>
             <div style={{ paddingTop: 24, paddingBottom: 4 }}>
-              <div style={{ marginBottom: 2 }}><Logo /></div>
+              <div style={{ marginBottom: 2 }}><Logo onClick={goHome} /></div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 700, color: ink }}>{editId ? "Edit Order" : "New Order"}</div>
-                <button onClick={() => {
-                  const isDirty = !!form.customer || form.items.some(i => +i.retailQty > 0 || +i.kgQty > 0) || !!form.notes;
-                  if (isDirty && !window.confirm("Discard changes? Anything you've entered will be lost.")) return;
-                  const wasEditing = !!editId;
-                  setForm(emptyForm());
-                  setEditId(null);
-                  setFormErrors({});
-                  if (wasEditing) setTab(prevTab);
-                }} style={{
+                <button onClick={closeForm} style={{
                   background: "none", border: "none", fontSize: 24,
                   cursor: "pointer", color: muted, lineHeight: 1, padding: 4,
                 }}>×</button>
@@ -964,14 +1197,15 @@ export default function App() {
 
             <button
               onClick={saveOrder}
+              disabled={saving}
               style={{
                 width: "100%", padding: "13px 0", background: accent, border: "none",
                 borderRadius: 10, color: "#fff", fontFamily: "'DM Sans', sans-serif",
                 fontWeight: 700, fontSize: 13, letterSpacing: "0.02em",
-                cursor: "pointer",
+                cursor: saving ? "default" : "pointer", opacity: saving ? 0.7 : 1,
               }}
             >
-              {editId ? "Save changes" : "Save order"}
+              {saving ? "Saving…" : editId ? "Save changes" : "Save order"}
             </button>
           </div>
         )}
@@ -981,7 +1215,7 @@ export default function App() {
           <>
           <div style={{ padding: "0 16px" }}>
             <div style={{ paddingTop: 52, paddingBottom: 8 }}>
-              <div style={{ marginBottom: 2 }}><Logo /></div>
+              <div style={{ marginBottom: 2 }}><Logo onClick={goHome} /></div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
                 <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 700, color: ink }}>Packed Orders</div>
                 <button
@@ -1083,10 +1317,25 @@ export default function App() {
             {packedOrders.length === 0 ? (
               <div style={{ textAlign: "center", padding: "80px 0", color: muted, fontFamily: "'DM Sans', sans-serif" }}>
                 <div style={{ fontSize: 40, marginBottom: 14 }}>📦</div>
-                <div style={{ fontWeight: 600, fontSize: 15, color: ink }}>No packed orders</div>
-                <div style={{ fontSize: 13, marginTop: 4 }}>
-                  {dateF === "today" ? "None packed today yet" : "Try adjusting your filters"}
+                <div style={{ fontWeight: 600, fontSize: 15, color: ink }}>
+                  {filtersActive ? "No packed orders match your filters" : "No packed orders"}
                 </div>
+                <div style={{ fontSize: 13, marginTop: 4 }}>
+                  {filtersActive ? "Try adjusting your search or filters" : "None packed today yet"}
+                </div>
+                {filtersActive && (
+                  <button
+                    onClick={() => { setSearch(""); setDateF("today"); setCustomStart(""); setCustomEnd(""); setProductF("all"); setSizeF("all"); setShowF(false); }}
+                    style={{
+                      marginTop: 16, padding: "9px 18px", background: "none",
+                      border: `1.5px solid ${border}`, borderRadius: 8,
+                      fontFamily: "'DM Sans', sans-serif", fontWeight: 600,
+                      fontSize: 12, letterSpacing: "0.02em", color: ink, cursor: "pointer",
+                    }}
+                  >
+                    Clear filters
+                  </button>
+                )}
               </div>
             ) : (
               <>
@@ -1130,6 +1379,14 @@ export default function App() {
 
           {packedOrders.length > 0 && (
             <div style={{ padding: "0 16px 16px" }}>
+              {selectedIds.length === 0 && (
+                <div style={{
+                  textAlign: "center", fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 11.5, color: muted, marginBottom: 6,
+                }}>
+                  Select orders above to export
+                </div>
+              )}
               <button
                 onClick={() => exportCsv(orders.filter(o => selectedIds.includes(o.id)))}
                 disabled={selectedIds.length === 0}
@@ -1143,14 +1400,6 @@ export default function App() {
               >
                 Export CSV{selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
               </button>
-              {selectedIds.length === 0 && (
-                <div style={{
-                  textAlign: "center", fontFamily: "'DM Sans', sans-serif",
-                  fontSize: 11.5, color: muted, marginTop: 6,
-                }}>
-                  Select orders above to export
-                </div>
-              )}
             </div>
           )}
           </>
@@ -1176,6 +1425,19 @@ export default function App() {
           onEdit={startEdit}
           onDelete={deleteOrder}
           isDesktop={isDesktop}
+          requestConfirm={requestConfirm}
+        />
+        <ConfirmDialog
+          open={!!confirmState}
+          title={confirmState?.title}
+          message={confirmState?.message}
+          confirmLabel={confirmState?.confirmLabel}
+          danger={confirmState?.danger}
+          onConfirm={() => {
+            confirmState?.onConfirm?.();
+            setConfirmState(null);
+          }}
+          onCancel={() => setConfirmState(null)}
         />
       </div>
     </div>
