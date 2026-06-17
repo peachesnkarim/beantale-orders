@@ -18,6 +18,19 @@ const SEED_CUSTOMERS = [
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2);
 
+function useIsDesktop() {
+  const [isDesktop, setIsDesktop] = useState(
+    typeof window !== "undefined" ? window.innerWidth >= 768 : false
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)");
+    const onChange = e => setIsDesktop(e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return isDesktop;
+}
+
 const fmtTime = iso =>
   new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
@@ -50,25 +63,48 @@ const muted  = "#A08C7C";
 const border = "#EDE5DC";
 const green  = "#15803D";
 const greenBg = "#DCFCE7";
+const amber  = "#B45309";
+const amberBg = "#FEF3C7";
+const red    = "#B91C1C";
+const redBg  = "#FEE2E2";
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
-function Badge({ status }) {
+function Badge({ status, partial }) {
   const isPacked = status === "packed";
+  const isPartial = isPacked && partial;
+  const label = isPartial ? "PARTIAL" : isPacked ? "PACKED" : "OPEN";
+  const color = isPartial ? amber : isPacked ? green : ink;
+  const bg    = isPartial ? amberBg : isPacked ? greenBg : "#EEEAE5";
   return (
     <span style={{
       fontSize: 10, fontWeight: 700, letterSpacing: "0.07em",
       fontFamily: "'DM Sans', sans-serif",
-      color: isPacked ? green : ink,
-      background: isPacked ? greenBg : "#EEEAE5",
+      color, background: bg,
       padding: "3px 8px", borderRadius: 4, flexShrink: 0,
     }}>
-      {isPacked ? "PACKED" : "OPEN"}
+      {label}
     </span>
   );
 }
 
-function OrderCard({ order, onMark, onClick }) {
+function Logo() {
+  const petal = "M50 50 C38 38 35 15 50 5 C65 15 62 38 50 50 Z";
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <svg width="15" height="15" viewBox="0 0 100 100" style={{ flexShrink: 0 }}>
+        <g fill="#C8844A">
+          <path d={petal} />
+          <path d={petal} transform="rotate(120 50 50)" />
+          <path d={petal} transform="rotate(240 50 50)" />
+        </g>
+      </svg>
+      <span style={{ fontSize: 11, color: "#C8844A", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, letterSpacing: "0.12em" }}>BEANTALE</span>
+    </span>
+  );
+}
+
+function OrderCard({ order, onMark, onClick, selectable, selected, onToggleSelect }) {
   const lines = toLines(order.items);
   const isPacked = order.status === "packed";
   return (
@@ -80,11 +116,23 @@ function OrderCard({ order, onMark, onClick }) {
       boxShadow: "0 1px 4px rgba(26,8,0,0.05)",
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3, gap: 8 }}>
-        <span style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 15, color: ink }}>{order.customer}</span>
-        <Badge status={order.status} />
+        <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          {selectable && (
+            <input
+              type="checkbox"
+              checked={!!selected}
+              onClick={e => e.stopPropagation()}
+              onChange={() => onToggleSelect(order.id)}
+              style={{ width: 16, height: 16, flexShrink: 0, accentColor: ink, cursor: "pointer" }}
+            />
+          )}
+          <span style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 15, color: ink, overflow: "hidden", textOverflow: "ellipsis" }}>{order.customer}</span>
+        </span>
+        <Badge status={order.status} partial={order.partial} />
       </div>
       <div style={{ fontSize: 12, color: muted, fontFamily: "'DM Sans', sans-serif", marginBottom: 8 }}>
-        {fmtDay(order.ts)}, {fmtTime(order.ts)}
+        Ordered {fmtDay(order.ts)}, {fmtTime(order.ts)}
+        {isPacked && order.packedTs && <> · Packed {fmtDay(order.packedTs)}, {fmtTime(order.packedTs)}</>}
       </div>
       <div style={{ fontSize: 13, color: "#4A3728", fontFamily: "'DM Sans', sans-serif", lineHeight: 1.6, marginBottom: isPacked ? 4 : 12 }}>
         {lines.slice(0, 2).map((l, i) => <div key={i}>{l}</div>)}
@@ -109,25 +157,46 @@ function OrderCard({ order, onMark, onClick }) {
   );
 }
 
-function DetailSheet({ order, onClose, onMark }) {
+function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
+  const [packing, setPacking] = useState(false);
+  const [draft, setDraft]     = useState([]);
+
+  useEffect(() => {
+    setPacking(false);
+    if (order) {
+      setDraft(order.items.map(it => ({
+        ...it,
+        packedRetailQty: it.packedRetailQty !== undefined ? it.packedRetailQty : it.retailQty,
+        packedKgQty: it.packedKgQty !== undefined ? it.packedKgQty : it.kgQty,
+      })));
+    }
+  }, [order?.id]);
+
   if (!order) return null;
   const isPacked = order.status === "packed";
+
+  const confirmPack = () => {
+    onMark(order.id, draft);
+    setPacking(false);
+  };
+
   return (
     <div
       style={{
         position: "fixed", inset: 0, zIndex: 300,
         background: "rgba(26,8,0,0.45)",
-        display: "flex", alignItems: "flex-end", justifyContent: "center",
+        display: "flex", alignItems: isDesktop ? "center" : "flex-end", justifyContent: "center",
       }}
       onClick={onClose}
     >
       <div
         onClick={e => e.stopPropagation()}
         style={{
-          width: "100%", maxWidth: 430, background: cream,
-          borderRadius: "20px 20px 0 0",
+          width: "100%", maxWidth: isDesktop ? 480 : 430, background: cream,
+          borderRadius: isDesktop ? 16 : "20px 20px 0 0",
           maxHeight: "88vh", overflowY: "auto",
           padding: "0 20px 44px",
+          marginBottom: isDesktop ? 40 : 0,
         }}
       >
         {/* Handle */}
@@ -140,60 +209,193 @@ function DetailSheet({ order, onClose, onMark }) {
           <div>
             <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 20, fontWeight: 700, color: ink }}>{order.customer}</div>
             <div style={{ fontSize: 12, color: muted, fontFamily: "'DM Sans', sans-serif", marginTop: 2 }}>
-              {fmtDay(order.ts)}, {fmtTime(order.ts)}
+              Ordered {fmtDay(order.ts)}, {fmtTime(order.ts)}
+              {isPacked && order.packedTs && <><br />Packed {fmtDay(order.packedTs)}, {fmtTime(order.packedTs)}</>}
             </div>
           </div>
-          <Badge status={order.status} />
+          <Badge status={order.status} partial={order.partial} />
         </div>
 
-        {/* Items */}
-        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: muted, fontFamily: "'DM Sans', sans-serif", marginBottom: 10 }}>ORDER ITEMS</div>
-        {order.items.map((it, i) => {
-          return (
-            <div key={i}>
-              {+it.retailQty > 0 && (
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 0", borderBottom: `1px solid ${border}` }}>
-                  <div>
-                    <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 500, fontSize: 14, color: ink }}>{it.name}</div>
-                    <div style={{ fontSize: 12, color: muted, fontFamily: "'DM Sans', sans-serif" }}>Retail Bag</div>
-                  </div>
-                  <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 16, color: ink }}>×{it.retailQty}</div>
-                </div>
-              )}
-              {+it.kgQty > 0 && (
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 0", borderBottom: `1px solid ${border}` }}>
-                  <div>
-                    <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 500, fontSize: 14, color: ink }}>{it.name}</div>
-                    <div style={{ fontSize: 12, color: muted, fontFamily: "'DM Sans', sans-serif" }}>1kg Bag</div>
-                  </div>
-                  <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 16, color: ink }}>×{it.kgQty}</div>
-                </div>
-              )}
+        {packing ? (
+          <>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: muted, fontFamily: "'DM Sans', sans-serif", marginBottom: 10 }}>
+              CONFIRM PACKED QUANTITIES
             </div>
-          );
-        })}
+            {draft.map((it, i) => (
+              <div key={it.id}>
+                {+it.retailQty > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${border}` }}>
+                    <div>
+                      <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 500, fontSize: 14, color: ink }}>{it.name}</div>
+                      <div style={{ fontSize: 12, color: muted, fontFamily: "'DM Sans', sans-serif" }}>Retail Bag · Ordered {it.retailQty}</div>
+                    </div>
+                    <input
+                      type="number" min="0"
+                      value={it.packedRetailQty}
+                      onChange={e => {
+                        const d = [...draft];
+                        d[i] = { ...d[i], packedRetailQty: e.target.value };
+                        setDraft(d);
+                      }}
+                      style={{
+                        width: 64, padding: "8px 4px", textAlign: "center", borderRadius: 6,
+                        border: `1.5px solid ${border}`, fontFamily: "'DM Sans', sans-serif",
+                        fontSize: 14, color: ink, background: "#fff", outline: "none",
+                      }}
+                    />
+                  </div>
+                )}
+                {+it.kgQty > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${border}` }}>
+                    <div>
+                      <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 500, fontSize: 14, color: ink }}>{it.name}</div>
+                      <div style={{ fontSize: 12, color: muted, fontFamily: "'DM Sans', sans-serif" }}>1kg Bag · Ordered {it.kgQty}</div>
+                    </div>
+                    <input
+                      type="number" min="0"
+                      value={it.packedKgQty}
+                      onChange={e => {
+                        const d = [...draft];
+                        d[i] = { ...d[i], packedKgQty: e.target.value };
+                        setDraft(d);
+                      }}
+                      style={{
+                        width: 64, padding: "8px 4px", textAlign: "center", borderRadius: 6,
+                        border: `1.5px solid ${border}`, fontFamily: "'DM Sans', sans-serif",
+                        fontSize: 14, color: ink, background: "#fff", outline: "none",
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            ))}
+            <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+              <button
+                onClick={() => setPacking(false)}
+                style={{
+                  flex: 1, padding: "13px 0", background: "transparent", border: `1.5px solid ${border}`,
+                  borderRadius: 10, color: ink, fontFamily: "'DM Sans', sans-serif",
+                  fontWeight: 700, fontSize: 13, letterSpacing: "0.06em", cursor: "pointer",
+                }}
+              >
+                CANCEL
+              </button>
+              <button
+                onClick={confirmPack}
+                style={{
+                  flex: 1, padding: "13px 0", background: ink, border: "none",
+                  borderRadius: 10, color: "#fff", fontFamily: "'DM Sans', sans-serif",
+                  fontWeight: 700, fontSize: 13, letterSpacing: "0.06em", cursor: "pointer",
+                }}
+              >
+                CONFIRM
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Items */}
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: muted, fontFamily: "'DM Sans', sans-serif", marginBottom: 10 }}>ORDER ITEMS</div>
+            {order.items.map((it, i) => {
+              const retailShort = isPacked && it.packedRetailQty !== undefined && +it.packedRetailQty !== +it.retailQty;
+              const kgShort = isPacked && it.packedKgQty !== undefined && +it.packedKgQty !== +it.kgQty;
+              return (
+                <div key={i}>
+                  {+it.retailQty > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 0", borderBottom: `1px solid ${border}` }}>
+                      <div>
+                        <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 500, fontSize: 14, color: ink }}>{it.name}</div>
+                        <div style={{ fontSize: 12, color: muted, fontFamily: "'DM Sans', sans-serif" }}>Retail Bag</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 16, color: ink }}>×{it.retailQty}</div>
+                        {retailShort && (
+                          <div style={{ fontSize: 11, color: amber, fontWeight: 600, fontFamily: "'DM Sans', sans-serif" }}>
+                            Packed: {it.packedRetailQty || 0}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {+it.kgQty > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 0", borderBottom: `1px solid ${border}` }}>
+                      <div>
+                        <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 500, fontSize: 14, color: ink }}>{it.name}</div>
+                        <div style={{ fontSize: 12, color: muted, fontFamily: "'DM Sans', sans-serif" }}>1kg Bag</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 700, fontSize: 16, color: ink }}>×{it.kgQty}</div>
+                        {kgShort && (
+                          <div style={{ fontSize: 11, color: amber, fontWeight: 600, fontFamily: "'DM Sans', sans-serif" }}>
+                            Packed: {it.packedKgQty || 0}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
 
-        {/* Notes */}
-        {order.notes && (
-          <div style={{ marginTop: 16, padding: "12px 14px", background: "#F9F5EF", borderRadius: 8 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: muted, fontFamily: "'DM Sans', sans-serif", marginBottom: 4 }}>NOTES</div>
-            <div style={{ fontSize: 13, color: ink, fontFamily: "'DM Sans', sans-serif", lineHeight: 1.5 }}>{order.notes}</div>
-          </div>
-        )}
+            {/* Notes */}
+            {order.notes && (
+              <div style={{ marginTop: 16, padding: "12px 14px", background: "#F9F5EF", borderRadius: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: muted, fontFamily: "'DM Sans', sans-serif", marginBottom: 4 }}>NOTES</div>
+                <div style={{ fontSize: 13, color: ink, fontFamily: "'DM Sans', sans-serif", lineHeight: 1.5 }}>{order.notes}</div>
+              </div>
+            )}
 
-        <div style={{ height: 20 }} />
+            <div style={{ height: 20 }} />
 
-        {!isPacked && (
-          <button
-            onClick={() => onMark(order.id)}
-            style={{
-              width: "100%", padding: "15px 0", background: ink, border: "none",
-              borderRadius: 10, color: "#fff", fontFamily: "'DM Sans', sans-serif",
-              fontWeight: 700, fontSize: 13, letterSpacing: "0.08em", cursor: "pointer",
-            }}
-          >
-            MARK PACKED
-          </button>
+            {!isPacked && (
+              <>
+                <button
+                  onClick={() => onMark(order.id)}
+                  style={{
+                    width: "100%", padding: "15px 0", background: ink, border: "none",
+                    borderRadius: 10, color: "#fff", fontFamily: "'DM Sans', sans-serif",
+                    fontWeight: 700, fontSize: 13, letterSpacing: "0.08em", cursor: "pointer",
+                  }}
+                >
+                  MARK FULLY PACKED
+                </button>
+                <button
+                  onClick={() => setPacking(true)}
+                  style={{
+                    width: "100%", marginTop: 8, padding: "12px 0", background: "transparent",
+                    border: `1.5px solid ${border}`, borderRadius: 10, color: ink,
+                    fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 12,
+                    letterSpacing: "0.06em", cursor: "pointer",
+                  }}
+                >
+                  PACK PARTIALLY
+                </button>
+              </>
+            )}
+
+            <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+              <button
+                onClick={() => onEdit(order)}
+                style={{
+                  flex: 1, padding: "12px 0", background: "transparent", border: `1.5px solid ${border}`,
+                  borderRadius: 10, color: ink, fontFamily: "'DM Sans', sans-serif",
+                  fontWeight: 600, fontSize: 12, letterSpacing: "0.06em", cursor: "pointer",
+                }}
+              >
+                EDIT
+              </button>
+              <button
+                onClick={() => onDelete(order.id)}
+                style={{
+                  flex: 1, padding: "12px 0", background: "transparent", border: `1.5px solid #F3C2C2`,
+                  borderRadius: 10, color: red, fontFamily: "'DM Sans', sans-serif",
+                  fontWeight: 600, fontSize: 12, letterSpacing: "0.06em", cursor: "pointer",
+                }}
+              >
+                DELETE
+              </button>
+            </div>
+          </>
         )}
       </div>
     </div>
@@ -232,6 +434,7 @@ function BottomNav({ tab, onChange }) {
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
+  const isDesktop = useIsDesktop();
   const [tab, setTab]         = useState("open");
   const [orders, setOrders]   = useState([]);
   const [customers, setCustomers] = useState(SEED_CUSTOMERS);
@@ -240,13 +443,19 @@ export default function App() {
 
   // New order form
   const [form, setForm]       = useState(emptyForm());
+  const [editId, setEditId]   = useState(null);
   const [custDrop, setCustDrop] = useState(false);
   const custRef = useRef(null);
 
   // Packed filters
   const [search, setSearch]   = useState("");
   const [dateF, setDateF]     = useState("today");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd]     = useState("");
+  const [productF, setProductF] = useState("all");
+  const [sizeF, setSizeF]     = useState("all");
   const [showF, setShowF]     = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
 
   // ── Persistence (browser localStorage — per-device/browser) ───────────────
   useEffect(() => {
@@ -290,25 +499,91 @@ export default function App() {
     if (!form.customer) return;
     const active = form.items.filter(i => +i.retailQty > 0 || +i.kgQty > 0);
     if (!active.length) return;
-    const order = {
-      id: uid(),
-      customer: form.customer,
-      ts: new Date().toISOString(),
-      items: active,
-      notes: form.notes,
-      status: "open",
-    };
-    setOrders(p => [order, ...p]);
     if (!customers.includes(form.customer)) {
       setCustomers(p => [...p, form.customer].sort((a, b) => a.localeCompare(b)));
+    }
+    if (editId) {
+      setOrders(p => p.map(o => o.id === editId
+        ? { ...o, customer: form.customer, items: active, notes: form.notes }
+        : o));
+      setEditId(null);
+    } else {
+      const order = {
+        id: uid(),
+        customer: form.customer,
+        ts: new Date().toISOString(),
+        items: active,
+        notes: form.notes,
+        status: "open",
+      };
+      setOrders(p => [order, ...p]);
     }
     setForm(emptyForm());
     setTab("open");
   };
 
-  const markPacked = id => {
-    setOrders(p => p.map(o => o.id === id ? { ...o, status: "packed" } : o));
-    setDetail(p => p?.id === id ? { ...p, status: "packed" } : p);
+  const startEdit = order => {
+    setForm({
+      customer: order.customer,
+      items: PRODUCTS.map(p => {
+        const match = order.items.find(i => i.id === p.id);
+        return { ...p, retailQty: match ? match.retailQty : "", kgQty: match ? match.kgQty : "" };
+      }),
+      notes: order.notes || "",
+    });
+    setEditId(order.id);
+    setDetail(null);
+    setTab("new");
+  };
+
+  const deleteOrder = id => {
+    if (!window.confirm("Delete this order? This can't be undone.")) return;
+    setOrders(p => p.filter(o => o.id !== id));
+    setDetail(p => p?.id === id ? null : p);
+  };
+
+  const markPacked = (id, packedItems) => {
+    setOrders(p => p.map(o => {
+      if (o.id !== id) return o;
+      const items = packedItems || o.items.map(it => ({ ...it, packedRetailQty: it.retailQty, packedKgQty: it.kgQty }));
+      const partial = items.some(it =>
+        +(it.packedRetailQty || 0) < +(it.retailQty || 0) || +(it.packedKgQty || 0) < +(it.kgQty || 0)
+      );
+      return { ...o, status: "packed", partial, items, packedTs: new Date().toISOString() };
+    }));
+    setDetail(p => p?.id === id ? null : p);
+  };
+
+  const toggleSelect = id => {
+    setSelectedIds(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
+  };
+
+  const exportCsv = orderList => {
+    const esc = v => {
+      const s = String(v ?? "");
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const rows = [];
+    orderList.forEach(o => {
+      const dateStr = new Date(o.ts).toLocaleDateString("en-GB");
+      const packedDateStr = o.packedTs ? new Date(o.packedTs).toLocaleDateString("en-GB") : "";
+      o.items.forEach(it => {
+        const retailQty = o.status === "packed" && it.packedRetailQty !== undefined ? it.packedRetailQty : it.retailQty;
+        const kgQty = o.status === "packed" && it.packedKgQty !== undefined ? it.packedKgQty : it.kgQty;
+        if (+it.retailQty > 0) rows.push(["", o.customer, dateStr, it.name, "250g", retailQty || 0, packedDateStr]);
+        if (+it.kgQty > 0)     rows.push(["", o.customer, dateStr, it.name, "1kg", kgQty || 0, packedDateStr]);
+      });
+    });
+    const csv = rows.map(r => r.map(esc).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `beantale-orders-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   // ── Derived ────────────────────────────────────────────────────────────────
@@ -322,6 +597,18 @@ export default function App() {
     if (dateF === "week") {
       const w = new Date(now); w.setDate(w.getDate() - 7);
       if (od < w) return false;
+    }
+    if (dateF === "custom") {
+      if (customStart && od < new Date(customStart)) return false;
+      if (customEnd) {
+        const end = new Date(customEnd); end.setHours(23, 59, 59, 999);
+        if (od > end) return false;
+      }
+    }
+    if (productF !== "all" && !o.items.some(it => it.id === productF && (+it.retailQty > 0 || +it.kgQty > 0))) return false;
+    if (sizeF !== "all") {
+      const has = o.items.some(it => sizeF === "retail" ? +it.retailQty > 0 : +it.kgQty > 0);
+      if (!has) return false;
     }
     return true;
   });
@@ -348,15 +635,27 @@ export default function App() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div style={{ background: cream, height: "100dvh", overflow: "hidden", display: "flex", justifyContent: "center" }}>
-      <div style={{ width: "100%", maxWidth: 430, height: "100%", display: "flex", flexDirection: "column" }}>
+    <div style={{
+      background: cream, height: "100dvh", overflow: "hidden",
+      display: "flex", justifyContent: "center",
+      ...(isDesktop ? {
+        backgroundImage: "linear-gradient(180deg, #F3EAE0 0%, #F3EAE0 100%)",
+      } : {}),
+    }}>
+      <div style={{
+        width: "100%", maxWidth: isDesktop ? 560 : 430, height: "100%",
+        display: "flex", flexDirection: "column",
+        ...(isDesktop ? {
+          boxShadow: "0 0 60px rgba(26,8,0,0.12)", background: cream,
+        } : {}),
+      }}>
         <div style={{ flex: 1, overflowY: "auto" }}>
 
         {/* ════════════════════════ OPEN ORDERS ════════════════════════ */}
         {tab === "open" && (
           <div style={{ padding: "0 16px" }}>
             <div style={{ paddingTop: 52, paddingBottom: 8 }}>
-              <div style={{ fontSize: 11, color: "#C8844A", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, letterSpacing: "0.12em", marginBottom: 2 }}>BEANTALE</div>
+              <div style={{ marginBottom: 2 }}><Logo /></div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
                 <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 700, color: ink }}>Open Orders</div>
                 <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: muted, paddingBottom: 4 }}>
@@ -383,10 +682,10 @@ export default function App() {
         {tab === "new" && (
           <div style={{ padding: "0 16px 24px" }}>
             <div style={{ paddingTop: 52, paddingBottom: 8 }}>
-              <div style={{ fontSize: 11, color: "#C8844A", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, letterSpacing: "0.12em", marginBottom: 2 }}>BEANTALE</div>
+              <div style={{ marginBottom: 2 }}><Logo /></div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 700, color: ink }}>New Order</div>
-                <button onClick={() => { setForm(emptyForm()); }} style={{
+                <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 700, color: ink }}>{editId ? "Edit Order" : "New Order"}</div>
+                <button onClick={() => { setForm(emptyForm()); setEditId(null); }} style={{
                   background: "none", border: "none", fontSize: 24,
                   cursor: "pointer", color: muted, lineHeight: 1, padding: 4,
                 }}>×</button>
@@ -509,16 +808,17 @@ export default function App() {
                 transition: "opacity 0.2s",
               }}
             >
-              SAVE ORDER
+              {editId ? "SAVE CHANGES" : "SAVE ORDER"}
             </button>
           </div>
         )}
 
         {/* ════════════════════════ PACKED ORDERS ══════════════════════ */}
         {tab === "packed" && (
+          <>
           <div style={{ padding: "0 16px" }}>
             <div style={{ paddingTop: 52, paddingBottom: 8 }}>
-              <div style={{ fontSize: 11, color: "#C8844A", fontFamily: "'DM Sans', sans-serif", fontWeight: 700, letterSpacing: "0.12em", marginBottom: 2 }}>BEANTALE</div>
+              <div style={{ marginBottom: 2 }}><Logo /></div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
                 <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 700, color: ink }}>Packed Orders</div>
                 <button
@@ -567,9 +867,44 @@ export default function App() {
                   <option value="today">Today</option>
                   <option value="week">Last 7 days</option>
                   <option value="all">All time</option>
+                  <option value="custom">Custom range...</option>
                 </select>
+                {dateF === "custom" && (
+                  <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                    <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} style={{ ...inputStyle, fontSize: 13 }} />
+                    <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} style={{ ...inputStyle, fontSize: 13 }} />
+                  </div>
+                )}
+
+                <div style={isDesktop ? { display: "flex", gap: 12 } : {}}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ ...sectionLabel, marginBottom: 6 }}>PRODUCT</label>
+                    <select
+                      value={productF}
+                      onChange={e => setProductF(e.target.value)}
+                      style={{ ...inputStyle, marginBottom: 12 }}
+                    >
+                      <option value="all">All products</option>
+                      {PRODUCTS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+
+                  <div style={{ flex: 1 }}>
+                    <label style={{ ...sectionLabel, marginBottom: 6 }}>SIZE</label>
+                    <select
+                      value={sizeF}
+                      onChange={e => setSizeF(e.target.value)}
+                      style={{ ...inputStyle, marginBottom: 12 }}
+                    >
+                      <option value="all">All sizes</option>
+                      <option value="retail">Retail (250g)</option>
+                      <option value="kg">1kg</option>
+                    </select>
+                  </div>
+                </div>
+
                 <button
-                  onClick={() => { setSearch(""); setDateF("today"); setShowF(false); }}
+                  onClick={() => { setSearch(""); setDateF("today"); setCustomStart(""); setCustomEnd(""); setProductF("all"); setSizeF("all"); setShowF(false); }}
                   style={{
                     width: "100%", padding: "9px 0", background: "none",
                     border: `1.5px solid ${border}`, borderRadius: 8,
@@ -591,11 +926,59 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              packedOrders.map(o => (
-                <OrderCard key={o.id} order={o} onMark={markPacked} onClick={() => setDetail(o)} />
-              ))
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 7, fontFamily: "'DM Sans', sans-serif", fontSize: 12.5, fontWeight: 600, color: ink, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={packedOrders.length > 0 && packedOrders.every(o => selectedIds.includes(o.id))}
+                      onChange={e => {
+                        const ids = packedOrders.map(o => o.id);
+                        setSelectedIds(p => e.target.checked
+                          ? [...new Set([...p, ...ids])]
+                          : p.filter(id => !ids.includes(id)));
+                      }}
+                      style={{ width: 16, height: 16, accentColor: ink, cursor: "pointer" }}
+                    />
+                    Select all ({packedOrders.length})
+                  </label>
+                  {selectedIds.length > 0 && (
+                    <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: muted }}>{selectedIds.length} selected</span>
+                  )}
+                </div>
+                {packedOrders.map(o => (
+                  <OrderCard
+                    key={o.id}
+                    order={o}
+                    onMark={markPacked}
+                    onClick={() => setDetail(o)}
+                    selectable
+                    selected={selectedIds.includes(o.id)}
+                    onToggleSelect={toggleSelect}
+                  />
+                ))}
+              </>
             )}
           </div>
+
+          {packedOrders.length > 0 && (
+            <div style={{ padding: "0 16px 16px" }}>
+              <button
+                onClick={() => exportCsv(orders.filter(o => selectedIds.includes(o.id)))}
+                disabled={selectedIds.length === 0}
+                style={{
+                  width: "100%", padding: "14px 0", background: ink, border: "none",
+                  borderRadius: 10, color: "#fff", fontFamily: "'DM Sans', sans-serif",
+                  fontWeight: 700, fontSize: 13, letterSpacing: "0.08em",
+                  cursor: selectedIds.length === 0 ? "not-allowed" : "pointer",
+                  opacity: selectedIds.length === 0 ? 0.4 : 1,
+                }}
+              >
+                EXPORT CSV{selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
+              </button>
+            </div>
+          )}
+          </>
         )}
 
         </div>
@@ -604,6 +987,9 @@ export default function App() {
           order={detail}
           onClose={() => setDetail(null)}
           onMark={markPacked}
+          onEdit={startEdit}
+          onDelete={deleteOrder}
+          isDesktop={isDesktop}
         />
       </div>
     </div>
