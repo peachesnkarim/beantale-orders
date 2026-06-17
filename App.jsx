@@ -50,6 +50,28 @@ const toLines = items =>
     return r;
   });
 
+// For packed orders, show the actual packed quantity (and flag a mismatch
+// against what was ordered) rather than silently showing ordered quantities.
+const toPackedLines = items =>
+  items.flatMap(it => {
+    const r = [];
+    const retailOrdered = +it.retailQty || 0;
+    const retailPacked = it.packedRetailQty !== undefined ? +it.packedRetailQty : retailOrdered;
+    if (retailOrdered > 0 || retailPacked > 0) {
+      r.push(retailPacked !== retailOrdered
+        ? `${it.name} – Retail · Ordered ${retailOrdered} · Packed ${retailPacked}`
+        : `${it.name} – Retail x${retailPacked}`);
+    }
+    const kgOrdered = +it.kgQty || 0;
+    const kgPacked = it.packedKgQty !== undefined ? +it.packedKgQty : kgOrdered;
+    if (kgOrdered > 0 || kgPacked > 0) {
+      r.push(kgPacked !== kgOrdered
+        ? `${it.name} – 1kg · Ordered ${kgOrdered} · Packed ${kgPacked}`
+        : `${it.name} – 1kg x${kgPacked}`);
+    }
+    return r;
+  });
+
 const emptyForm = () => ({
   customer: "",
   items: PRODUCTS.map(p => ({ ...p, retailQty: "", kgQty: "" })),
@@ -61,6 +83,7 @@ const ink    = "#1A0800";
 const cream  = "#FDF8F2";
 const muted  = "#A08C7C";
 const border = "#EDE5DC";
+const accent = "#C8844A";
 const green  = "#15803D";
 const greenBg = "#DCFCE7";
 const amber  = "#B45309";
@@ -71,20 +94,59 @@ const redBg  = "#FEE2E2";
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
 function Badge({ status, partial }) {
-  const isPacked = status === "packed";
-  const isPartial = isPacked && partial;
-  const label = isPartial ? "PARTIAL" : isPacked ? "PACKED" : "OPEN";
-  const color = isPartial ? amber : isPacked ? green : ink;
-  const bg    = isPartial ? amberBg : isPacked ? greenBg : "#EEEAE5";
+  // Open orders show no badge — every card in that list is open, so it adds no information.
+  if (status !== "packed") return null;
+  const isPartial = partial;
+  const label = isPartial ? "Partial" : "Packed";
+  const color = isPartial ? amber : green;
+  const bg    = isPartial ? amberBg : greenBg;
   return (
     <span style={{
-      fontSize: 10, fontWeight: 700, letterSpacing: "0.07em",
+      fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
       fontFamily: "'DM Sans', sans-serif",
       color, background: bg,
       padding: "3px 8px", borderRadius: 4, flexShrink: 0,
     }}>
       {label}
     </span>
+  );
+}
+
+function Stepper({ value, onChange, width }) {
+  const n = +value || 0;
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      background: "#FDFAF7", border: `1.5px solid ${border}`, borderRadius: 6,
+      height: 30, width: width || "100%", boxSizing: "border-box",
+    }}>
+      <button
+        type="button"
+        onClick={() => onChange(String(Math.max(0, n - 1)))}
+        style={{
+          width: 24, height: "100%", border: "none", background: "transparent",
+          fontSize: 16, color: ink, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+        }}
+      >
+        −
+      </button>
+      <span style={{
+        fontSize: 14, fontWeight: 600, color: ink, fontFamily: "'DM Sans', sans-serif",
+        minWidth: 16, textAlign: "center",
+      }}>
+        {n}
+      </span>
+      <button
+        type="button"
+        onClick={() => onChange(String(n + 1))}
+        style={{
+          width: 24, height: "100%", border: "none", background: "transparent",
+          fontSize: 16, color: ink, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+        }}
+      >
+        +
+      </button>
+    </div>
   );
 }
 
@@ -105,8 +167,8 @@ function Logo() {
 }
 
 function OrderCard({ order, onMark, onClick, selectable, selected, onToggleSelect }) {
-  const lines = toLines(order.items);
   const isPacked = order.status === "packed";
+  const lines = isPacked ? toPackedLines(order.items) : toLines(order.items);
   return (
     <div onClick={onClick} style={{
       background: "#fff", borderRadius: 12,
@@ -140,15 +202,18 @@ function OrderCard({ order, onMark, onClick, selectable, selected, onToggleSelec
       </div>
       {!isPacked ? (
         <button
-          onClick={e => { e.stopPropagation(); onMark(order.id); }}
+          onClick={e => {
+            e.stopPropagation();
+            if (window.confirm(`Mark all items for ${order.customer} as fully packed?`)) onMark(order.id);
+          }}
           style={{
-            width: "100%", padding: "9px 0", border: `1.5px solid ${ink}`,
-            borderRadius: 8, background: "transparent", color: ink,
+            width: "100%", padding: "9px 0", border: "none",
+            borderRadius: 8, background: accent, color: "#fff",
             fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 12,
-            letterSpacing: "0.06em", cursor: "pointer",
+            letterSpacing: "0.02em", cursor: "pointer",
           }}
         >
-          MARK PACKED
+          Mark packed
         </button>
       ) : (
         <div style={{ textAlign: "right", color: muted, fontSize: 20, lineHeight: 1 }}>›</div>
@@ -216,10 +281,16 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
           <Badge status={order.status} partial={order.partial} />
         </div>
 
+        {isPacked && order.partial && (
+          <div style={{ fontSize: 12, color: amber, fontFamily: "'DM Sans', sans-serif", marginTop: -10, marginBottom: 16, lineHeight: 1.4 }}>
+            Partial — one or more items were packed in a different quantity than ordered.
+          </div>
+        )}
+
         {packing ? (
           <>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: muted, fontFamily: "'DM Sans', sans-serif", marginBottom: 10 }}>
-              CONFIRM PACKED QUANTITIES
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: muted, fontFamily: "'DM Sans', sans-serif", marginBottom: 10 }}>
+              Confirm packed quantities
             </div>
             {draft.map((it, i) => (
               <div key={it.id}>
@@ -229,18 +300,13 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
                       <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 500, fontSize: 14, color: ink }}>{it.name}</div>
                       <div style={{ fontSize: 12, color: muted, fontFamily: "'DM Sans', sans-serif" }}>Retail Bag · Ordered {it.retailQty}</div>
                     </div>
-                    <input
-                      type="number" min="0"
+                    <Stepper
+                      width={96}
                       value={it.packedRetailQty}
-                      onChange={e => {
+                      onChange={v => {
                         const d = [...draft];
-                        d[i] = { ...d[i], packedRetailQty: e.target.value };
+                        d[i] = { ...d[i], packedRetailQty: v };
                         setDraft(d);
-                      }}
-                      style={{
-                        width: 64, padding: "8px 4px", textAlign: "center", borderRadius: 6,
-                        border: `1.5px solid ${border}`, fontFamily: "'DM Sans', sans-serif",
-                        fontSize: 14, color: ink, background: "#fff", outline: "none",
                       }}
                     />
                   </div>
@@ -251,18 +317,13 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
                       <div style={{ fontFamily: "'DM Sans', sans-serif", fontWeight: 500, fontSize: 14, color: ink }}>{it.name}</div>
                       <div style={{ fontSize: 12, color: muted, fontFamily: "'DM Sans', sans-serif" }}>1kg Bag · Ordered {it.kgQty}</div>
                     </div>
-                    <input
-                      type="number" min="0"
+                    <Stepper
+                      width={96}
                       value={it.packedKgQty}
-                      onChange={e => {
+                      onChange={v => {
                         const d = [...draft];
-                        d[i] = { ...d[i], packedKgQty: e.target.value };
+                        d[i] = { ...d[i], packedKgQty: v };
                         setDraft(d);
-                      }}
-                      style={{
-                        width: 64, padding: "8px 4px", textAlign: "center", borderRadius: 6,
-                        border: `1.5px solid ${border}`, fontFamily: "'DM Sans', sans-serif",
-                        fontSize: 14, color: ink, background: "#fff", outline: "none",
                       }}
                     />
                   </div>
@@ -275,27 +336,27 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
                 style={{
                   flex: 1, padding: "13px 0", background: "transparent", border: `1.5px solid ${border}`,
                   borderRadius: 10, color: ink, fontFamily: "'DM Sans', sans-serif",
-                  fontWeight: 700, fontSize: 13, letterSpacing: "0.06em", cursor: "pointer",
+                  fontWeight: 700, fontSize: 13, letterSpacing: "0.02em", cursor: "pointer",
                 }}
               >
-                CANCEL
+                Cancel
               </button>
               <button
                 onClick={confirmPack}
                 style={{
-                  flex: 1, padding: "13px 0", background: ink, border: "none",
+                  flex: 1, padding: "13px 0", background: accent, border: "none",
                   borderRadius: 10, color: "#fff", fontFamily: "'DM Sans', sans-serif",
-                  fontWeight: 700, fontSize: 13, letterSpacing: "0.06em", cursor: "pointer",
+                  fontWeight: 700, fontSize: 13, letterSpacing: "0.02em", cursor: "pointer",
                 }}
               >
-                CONFIRM
+                Confirm
               </button>
             </div>
           </>
         ) : (
           <>
             {/* Items */}
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: muted, fontFamily: "'DM Sans', sans-serif", marginBottom: 10 }}>ORDER ITEMS</div>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: muted, fontFamily: "'DM Sans', sans-serif", marginBottom: 10 }}>Order items</div>
             {order.items.map((it, i) => {
               const retailShort = isPacked && it.packedRetailQty !== undefined && +it.packedRetailQty !== +it.retailQty;
               const kgShort = isPacked && it.packedKgQty !== undefined && +it.packedKgQty !== +it.kgQty;
@@ -314,6 +375,11 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
                             Packed: {it.packedRetailQty || 0}
                           </div>
                         )}
+                        {!retailShort && isPacked && order.partial && (
+                          <div style={{ fontSize: 11, color: green, fontWeight: 600, fontFamily: "'DM Sans', sans-serif" }}>
+                            Packed: {it.packedRetailQty !== undefined ? it.packedRetailQty : it.retailQty} ✓
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -330,6 +396,11 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
                             Packed: {it.packedKgQty || 0}
                           </div>
                         )}
+                        {!kgShort && isPacked && order.partial && (
+                          <div style={{ fontSize: 11, color: green, fontWeight: 600, fontFamily: "'DM Sans', sans-serif" }}>
+                            Packed: {it.packedKgQty !== undefined ? it.packedKgQty : it.kgQty} ✓
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -340,7 +411,7 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
             {/* Notes */}
             {order.notes && (
               <div style={{ marginTop: 16, padding: "12px 14px", background: "#F9F5EF", borderRadius: 8 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: muted, fontFamily: "'DM Sans', sans-serif", marginBottom: 4 }}>NOTES</div>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: muted, fontFamily: "'DM Sans', sans-serif", marginBottom: 4 }}>Notes</div>
                 <div style={{ fontSize: 13, color: ink, fontFamily: "'DM Sans', sans-serif", lineHeight: 1.5 }}>{order.notes}</div>
               </div>
             )}
@@ -350,14 +421,16 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
             {!isPacked ? (
               <>
                 <button
-                  onClick={() => onMark(order.id)}
+                  onClick={() => {
+                    if (window.confirm(`Mark all items for ${order.customer} as fully packed?`)) onMark(order.id);
+                  }}
                   style={{
-                    width: "100%", padding: "15px 0", background: ink, border: "none",
+                    width: "100%", padding: "15px 0", background: accent, border: "none",
                     borderRadius: 10, color: "#fff", fontFamily: "'DM Sans', sans-serif",
-                    fontWeight: 700, fontSize: 13, letterSpacing: "0.08em", cursor: "pointer",
+                    fontWeight: 700, fontSize: 13, letterSpacing: "0.02em", cursor: "pointer",
                   }}
                 >
-                  MARK FULLY PACKED
+                  Mark fully packed
                 </button>
                 <button
                   onClick={() => setPacking(true)}
@@ -365,48 +438,62 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
                     width: "100%", marginTop: 8, padding: "12px 0", background: "transparent",
                     border: `1.5px solid ${border}`, borderRadius: 10, color: ink,
                     fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 12,
-                    letterSpacing: "0.06em", cursor: "pointer",
+                    letterSpacing: "0.02em", cursor: "pointer",
                   }}
                 >
-                  PACK PARTIALLY
+                  Pack partially
+                </button>
+                <button
+                  onClick={() => onEdit(order)}
+                  style={{
+                    width: "100%", marginTop: 10, padding: "12px 0", background: "transparent",
+                    border: `1.5px solid ${border}`, borderRadius: 10, color: ink,
+                    fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 12,
+                    letterSpacing: "0.02em", cursor: "pointer",
+                  }}
+                >
+                  Edit order
                 </button>
               </>
             ) : (
-              <button
-                onClick={() => setPacking(true)}
-                style={{
-                  width: "100%", padding: "12px 0", background: "transparent",
-                  border: `1.5px solid ${border}`, borderRadius: 10, color: ink,
-                  fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 12,
-                  letterSpacing: "0.06em", cursor: "pointer",
-                }}
-              >
-                EDIT PACKED QUANTITIES
-              </button>
+              <>
+                <button
+                  onClick={() => setPacking(true)}
+                  style={{
+                    width: "100%", padding: "15px 0", background: accent, border: "none",
+                    borderRadius: 10, color: "#fff", fontFamily: "'DM Sans', sans-serif",
+                    fontWeight: 700, fontSize: 13, letterSpacing: "0.02em", cursor: "pointer",
+                  }}
+                >
+                  Adjust packed quantities
+                </button>
+                <button
+                  onClick={() => onEdit(order)}
+                  style={{
+                    width: "100%", marginTop: 16, padding: "12px 0", background: "transparent",
+                    border: `1.5px solid ${border}`, borderRadius: 10, color: ink,
+                    fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 12,
+                    letterSpacing: "0.02em", cursor: "pointer",
+                  }}
+                >
+                  Edit order
+                </button>
+              </>
             )}
 
-            <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-              <button
-                onClick={() => onEdit(order)}
-                style={{
-                  flex: 1, padding: "12px 0", background: "transparent", border: `1.5px solid ${border}`,
-                  borderRadius: 10, color: ink, fontFamily: "'DM Sans', sans-serif",
-                  fontWeight: 600, fontSize: 12, letterSpacing: "0.06em", cursor: "pointer",
-                }}
-              >
-                EDIT
-              </button>
-              <button
-                onClick={() => onDelete(order.id)}
-                style={{
-                  flex: 1, padding: "12px 0", background: "transparent", border: `1.5px solid #F3C2C2`,
-                  borderRadius: 10, color: red, fontFamily: "'DM Sans', sans-serif",
-                  fontWeight: 600, fontSize: 12, letterSpacing: "0.06em", cursor: "pointer",
-                }}
-              >
-                DELETE
-              </button>
-            </div>
+            <div style={{ height: 1, background: border, margin: "14px 0 8px" }} />
+            <button
+              onClick={() => {
+                if (window.confirm(`Delete the order for ${order.customer}? This can't be undone.`)) onDelete(order.id);
+              }}
+              style={{
+                width: "100%", padding: "8px 0", background: "none", border: "none",
+                color: red, fontFamily: "'DM Sans', sans-serif",
+                fontWeight: 600, fontSize: 12, letterSpacing: "0.02em", cursor: "pointer",
+              }}
+            >
+              Delete order
+            </button>
           </>
         )}
       </div>
@@ -416,9 +503,9 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
 
 function BottomNav({ tab, onChange }) {
   const items = [
-    { id: "open",   label: "OPEN",      svg: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg> },
-    { id: "new",    label: "NEW ORDER",  svg: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg> },
-    { id: "packed", label: "PACKED",     svg: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg> },
+    { id: "open",   label: "Open",      svg: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg> },
+    { id: "new",    label: "New Order",  svg: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg> },
+    { id: "packed", label: "Packed",     svg: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg> },
   ];
   return (
     <nav style={{
@@ -452,9 +539,17 @@ export default function App() {
   const [customers, setCustomers] = useState(SEED_CUSTOMERS);
   const [detail, setDetail]   = useState(null);
   const [loaded, setLoaded]   = useState(false);
+  const [toast, setToast]     = useState("");
+  const toastTimer = useRef(null);
+  const showToast = msg => {
+    setToast(msg);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(""), 2200);
+  };
 
   // New order form
   const [form, setForm]       = useState(emptyForm());
+  const [formErrors, setFormErrors] = useState({});
   const [editId, setEditId]   = useState(null);
   const [prevTab, setPrevTab] = useState("open");
   const [custDrop, setCustDrop] = useState(false);
@@ -484,7 +579,7 @@ export default function App() {
 
     // Lock layout to viewport
     const style = document.createElement("style");
-    style.textContent = "html, body, #root { height: 100% !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; }";
+    style.textContent = "html, body, #root { height: 100% !important; margin: 0 !important; padding: 0 !important; overflow: hidden !important; } input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; } input[type=number] { -moz-appearance: textfield; }";
     document.head.appendChild(style);
     // Load fonts
     const link = document.createElement("link");
@@ -509,9 +604,13 @@ export default function App() {
 
   // ── Actions ────────────────────────────────────────────────────────────────
   const saveOrder = () => {
-    if (!form.customer) return;
+    const errors = {};
+    if (!form.customer) errors.customer = "Please select or enter a customer name.";
     const active = form.items.filter(i => +i.retailQty > 0 || +i.kgQty > 0);
-    if (!active.length) return;
+    if (!active.length) errors.items = "Please add at least one item to save this order.";
+    if (Object.keys(errors).length) { setFormErrors(errors); return; }
+    setFormErrors({});
+
     if (!customers.includes(form.customer)) {
       setCustomers(p => [...p, form.customer].sort((a, b) => a.localeCompare(b)));
     }
@@ -522,6 +621,7 @@ export default function App() {
       setForm(emptyForm());
       setEditId(null);
       setTab(prevTab);
+      showToast("Changes saved");
     } else {
       const order = {
         id: uid(),
@@ -534,6 +634,7 @@ export default function App() {
       setOrders(p => [order, ...p]);
       setForm(emptyForm());
       setTab("open");
+      showToast("Order saved");
     }
   };
 
@@ -600,6 +701,7 @@ export default function App() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    showToast(`Exported ${orderList.length} order${orderList.length === 1 ? "" : "s"} to CSV`);
   };
 
   // ── Derived ────────────────────────────────────────────────────────────────
@@ -633,13 +735,11 @@ export default function App() {
     !form.customer || c.toLowerCase().includes(form.customer.toLowerCase())
   );
 
-  const canSave = form.customer && form.items.some(i => +i.retailQty > 0 || +i.kgQty > 0);
-
   // ── Shared styles ──────────────────────────────────────────────────────────
   const inputStyle = {
-    padding: "11px 14px", borderRadius: 8, border: `1.5px solid ${border}`,
+    padding: "9px 12px", borderRadius: 8, border: `1.5px solid ${border}`,
     background: "#fff", fontFamily: "'DM Sans', sans-serif",
-    fontSize: 14, color: ink, outline: "none",
+    fontSize: 16, color: ink, outline: "none",
     width: "100%", boxSizing: "border-box",
   };
 
@@ -660,7 +760,7 @@ export default function App() {
     }}>
       <div style={{
         width: "100%", maxWidth: isDesktop ? 560 : 430, height: "100%",
-        display: "flex", flexDirection: "column",
+        display: "flex", flexDirection: "column", position: "relative",
         ...(isDesktop ? {
           boxShadow: "0 0 60px rgba(26,8,0,0.12)", background: cream,
         } : {}),
@@ -674,17 +774,29 @@ export default function App() {
               <div style={{ marginBottom: 2 }}><Logo /></div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
                 <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 700, color: ink }}>Open Orders</div>
-                <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: muted, paddingBottom: 4 }}>
-                  {openOrders.length} active
-                </div>
+                {openOrders.length > 0 && (
+                  <div style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: muted, paddingBottom: 4 }}>
+                    {openOrders.length} active
+                  </div>
+                )}
               </div>
             </div>
             <div style={{ height: 10 }} />
             {openOrders.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "80px 0", color: muted, fontFamily: "'DM Sans', sans-serif" }}>
+              <div style={{ textAlign: "center", padding: "80px 0 40px", color: muted, fontFamily: "'DM Sans', sans-serif" }}>
                 <div style={{ fontSize: 40, marginBottom: 14 }}>☕</div>
                 <div style={{ fontWeight: 600, fontSize: 15, color: ink }}>All clear!</div>
-                <div style={{ fontSize: 13, marginTop: 4 }}>New orders will appear here</div>
+                <div style={{ fontSize: 13, marginTop: 4, marginBottom: 20 }}>No open orders right now. Start a new one below.</div>
+                <button
+                  onClick={() => setTab("new")}
+                  style={{
+                    padding: "11px 22px", background: accent, border: "none",
+                    borderRadius: 10, color: "#fff", fontFamily: "'DM Sans', sans-serif",
+                    fontWeight: 700, fontSize: 13, letterSpacing: "0.02em", cursor: "pointer",
+                  }}
+                >
+                  + New order
+                </button>
               </div>
             ) : (
               openOrders.map(o => (
@@ -696,15 +808,18 @@ export default function App() {
 
         {/* ════════════════════════ NEW ORDER ══════════════════════════ */}
         {tab === "new" && (
-          <div style={{ padding: "0 16px 24px" }}>
-            <div style={{ paddingTop: 52, paddingBottom: 8 }}>
+          <div style={{ padding: "0 16px 14px" }}>
+            <div style={{ paddingTop: 24, paddingBottom: 4 }}>
               <div style={{ marginBottom: 2 }}><Logo /></div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 700, color: ink }}>{editId ? "Edit Order" : "New Order"}</div>
+                <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 700, color: ink }}>{editId ? "Edit Order" : "New Order"}</div>
                 <button onClick={() => {
+                  const isDirty = !!form.customer || form.items.some(i => +i.retailQty > 0 || +i.kgQty > 0) || !!form.notes;
+                  if (isDirty && !window.confirm("Discard changes? Anything you've entered will be lost.")) return;
                   const wasEditing = !!editId;
                   setForm(emptyForm());
                   setEditId(null);
+                  setFormErrors({});
                   if (wasEditing) setTab(prevTab);
                 }} style={{
                   background: "none", border: "none", fontSize: 24,
@@ -712,18 +827,21 @@ export default function App() {
                 }}>×</button>
               </div>
             </div>
-            <div style={{ height: 12 }} />
+            <div style={{ height: 6 }} />
 
             {/* Customer */}
-            <div style={{ marginBottom: 20 }} ref={custRef}>
-              <label style={sectionLabel}>CUSTOMER NAME</label>
+            <div style={{ marginBottom: 12 }} ref={custRef}>
+              <label style={{ ...sectionLabel, paddingLeft: 12 }}>Customer name</label>
               <div style={{ position: "relative" }}>
                 <input
                   value={form.customer}
-                  onChange={e => setForm(f => ({ ...f, customer: e.target.value }))}
+                  onChange={e => {
+                    setForm(f => ({ ...f, customer: e.target.value }));
+                    if (formErrors.customer) setFormErrors(fe => ({ ...fe, customer: undefined }));
+                  }}
                   onFocus={() => setCustDrop(true)}
                   placeholder="Select or type customer name"
-                  style={inputStyle}
+                  style={{ ...inputStyle, ...(formErrors.customer ? { border: `1px solid ${red}` } : {}) }}
                 />
                 {custDrop && filteredCustomers.length > 0 && (
                   <div style={{
@@ -747,16 +865,24 @@ export default function App() {
                   </div>
                 )}
               </div>
+              {formErrors.customer && (
+                <div style={{ color: red, fontFamily: "'DM Sans', sans-serif", fontSize: 12, paddingLeft: 12, marginTop: 5 }}>
+                  {formErrors.customer}
+                </div>
+              )}
             </div>
 
             {/* Products table */}
-            <div style={{ marginBottom: 20 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 72px 72px", gap: "0 8px", marginBottom: 8, paddingLeft: 12 }}>
-                <span style={sectionLabel}>COFFEE ORDERS</span>
-                <span style={{ ...sectionLabel, textAlign: "center" }}>Retail</span>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 72px 72px", gap: "0 8px", marginBottom: 4, padding: "0 12px" }}>
+                <span style={sectionLabel}>Coffee orders</span>
                 <span style={{ ...sectionLabel, textAlign: "center" }}>1kg Bag</span>
+                <span style={{ ...sectionLabel, textAlign: "center" }}>Retail</span>
               </div>
-              <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${border}`, overflow: "hidden" }}>
+              <div style={{
+                background: "#fff", borderRadius: 12, overflow: "hidden",
+                border: `1px solid ${formErrors.items ? red : border}`,
+              }}>
                 {form.items.map((it, idx) => {
                   const isLast = idx === form.items.length - 1;
                   return (
@@ -764,37 +890,25 @@ export default function App() {
                       <div style={{
                         display: "grid", gridTemplateColumns: "1fr 72px 72px",
                         gap: "0 8px", alignItems: "center",
-                        padding: "10px 12px",
+                        padding: "6px 12px",
                       }}>
                         <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14, fontWeight: 500, color: ink }}>{it.name}</span>
-                        <input
-                          type="number" min="0" placeholder="0"
-                          value={it.retailQty}
-                          onChange={e => {
+                        <Stepper
+                          value={it.kgQty}
+                          onChange={v => {
                             const items = [...form.items];
-                            items[idx] = { ...items[idx], retailQty: e.target.value };
+                            items[idx] = { ...items[idx], kgQty: v };
                             setForm(f => ({ ...f, items }));
-                          }}
-                          style={{
-                            padding: "8px 4px", textAlign: "center", borderRadius: 6,
-                            border: `1.5px solid ${border}`, fontFamily: "'DM Sans', sans-serif",
-                            fontSize: 14, color: ink, background: "#FDFAF7",
-                            outline: "none", width: "100%", boxSizing: "border-box",
+                            if (formErrors.items) setFormErrors(fe => ({ ...fe, items: undefined }));
                           }}
                         />
-                        <input
-                          type="number" min="0" placeholder="0"
-                          value={it.kgQty}
-                          onChange={e => {
+                        <Stepper
+                          value={it.retailQty}
+                          onChange={v => {
                             const items = [...form.items];
-                            items[idx] = { ...items[idx], kgQty: e.target.value };
+                            items[idx] = { ...items[idx], retailQty: v };
                             setForm(f => ({ ...f, items }));
-                          }}
-                          style={{
-                            padding: "8px 4px", textAlign: "center", borderRadius: 6,
-                            border: `1.5px solid ${border}`, fontFamily: "'DM Sans', sans-serif",
-                            fontSize: 14, color: ink, background: "#FDFAF7",
-                            outline: "none", width: "100%", boxSizing: "border-box",
+                            if (formErrors.items) setFormErrors(fe => ({ ...fe, items: undefined }));
                           }}
                         />
                       </div>
@@ -803,33 +917,35 @@ export default function App() {
                   );
                 })}
               </div>
+              {formErrors.items && (
+                <div style={{ color: red, fontFamily: "'DM Sans', sans-serif", fontSize: 12, paddingLeft: 12, marginTop: 5 }}>
+                  {formErrors.items}
+                </div>
+              )}
             </div>
 
             {/* Notes */}
-            <div style={{ marginBottom: 24 }}>
-              <label style={sectionLabel}>NOTES (OPTIONAL)</label>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ ...sectionLabel, paddingLeft: 12 }}>Notes (optional)</label>
               <textarea
                 value={form.notes}
                 onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                 placeholder="Special instructions, delivery notes, etc."
-                rows={3}
-                style={{ ...inputStyle, resize: "none", lineHeight: 1.6 }}
+                rows={2}
+                style={{ ...inputStyle, resize: "none", lineHeight: 1.4 }}
               />
             </div>
 
             <button
               onClick={saveOrder}
-              disabled={!canSave}
               style={{
-                width: "100%", padding: "15px 0", background: ink, border: "none",
+                width: "100%", padding: "13px 0", background: accent, border: "none",
                 borderRadius: 10, color: "#fff", fontFamily: "'DM Sans', sans-serif",
-                fontWeight: 700, fontSize: 13, letterSpacing: "0.08em",
-                cursor: canSave ? "pointer" : "not-allowed",
-                opacity: canSave ? 1 : 0.4,
-                transition: "opacity 0.2s",
+                fontWeight: 700, fontSize: 13, letterSpacing: "0.02em",
+                cursor: "pointer",
               }}
             >
-              {editId ? "SAVE CHANGES" : "SAVE ORDER"}
+              {editId ? "Save changes" : "Save order"}
             </button>
           </div>
         )}
@@ -879,7 +995,7 @@ export default function App() {
             {/* Filter panel */}
             {showF && (
               <div style={{ background: "#fff", borderRadius: 10, border: `1px solid ${border}`, padding: "14px 14px 12px", marginBottom: 12 }}>
-                <label style={{ ...sectionLabel, marginBottom: 6 }}>DATE RANGE</label>
+                <label style={{ ...sectionLabel, marginBottom: 6 }}>Date range</label>
                 <select
                   value={dateF}
                   onChange={e => setDateF(e.target.value)}
@@ -892,14 +1008,14 @@ export default function App() {
                 </select>
                 {dateF === "custom" && (
                   <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-                    <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} style={{ ...inputStyle, fontSize: 13 }} />
-                    <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} style={{ ...inputStyle, fontSize: 13 }} />
+                    <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} style={inputStyle} />
+                    <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} style={inputStyle} />
                   </div>
                 )}
 
                 <div style={isDesktop ? { display: "flex", gap: 12 } : {}}>
                   <div style={{ flex: 1 }}>
-                    <label style={{ ...sectionLabel, marginBottom: 6 }}>PRODUCT</label>
+                    <label style={{ ...sectionLabel, marginBottom: 6 }}>Product</label>
                     <select
                       value={productF}
                       onChange={e => setProductF(e.target.value)}
@@ -911,7 +1027,7 @@ export default function App() {
                   </div>
 
                   <div style={{ flex: 1 }}>
-                    <label style={{ ...sectionLabel, marginBottom: 6 }}>SIZE</label>
+                    <label style={{ ...sectionLabel, marginBottom: 6 }}>Size</label>
                     <select
                       value={sizeF}
                       onChange={e => setSizeF(e.target.value)}
@@ -930,10 +1046,10 @@ export default function App() {
                     width: "100%", padding: "9px 0", background: "none",
                     border: `1.5px solid ${border}`, borderRadius: 8,
                     fontFamily: "'DM Sans', sans-serif", fontWeight: 600,
-                    fontSize: 12, letterSpacing: "0.06em", color: muted, cursor: "pointer",
+                    fontSize: 12, letterSpacing: "0.02em", color: muted, cursor: "pointer",
                   }}
                 >
-                  Clear Filters
+                  Clear filters
                 </button>
               </div>
             )}
@@ -964,7 +1080,11 @@ export default function App() {
                     Select all ({packedOrders.length})
                   </label>
                   {selectedIds.length > 0 && (
-                    <span style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 12, color: muted }}>{selectedIds.length} selected</span>
+                    <span style={{
+                      fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: 700,
+                      color: accent, background: "#FBEEE2", borderRadius: 999,
+                      padding: "3px 10px",
+                    }}>{selectedIds.length} selected</span>
                   )}
                 </div>
                 {packedOrders.map(o => (
@@ -988,21 +1108,40 @@ export default function App() {
                 onClick={() => exportCsv(orders.filter(o => selectedIds.includes(o.id)))}
                 disabled={selectedIds.length === 0}
                 style={{
-                  width: "100%", padding: "14px 0", background: ink, border: "none",
+                  width: "100%", padding: "14px 0", background: accent, border: "none",
                   borderRadius: 10, color: "#fff", fontFamily: "'DM Sans', sans-serif",
-                  fontWeight: 700, fontSize: 13, letterSpacing: "0.08em",
+                  fontWeight: 700, fontSize: 13, letterSpacing: "0.02em",
                   cursor: selectedIds.length === 0 ? "not-allowed" : "pointer",
                   opacity: selectedIds.length === 0 ? 0.4 : 1,
                 }}
               >
-                EXPORT CSV{selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
+                Export CSV{selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
               </button>
+              {selectedIds.length === 0 && (
+                <div style={{
+                  textAlign: "center", fontFamily: "'DM Sans', sans-serif",
+                  fontSize: 11.5, color: muted, marginTop: 6,
+                }}>
+                  Select orders above to export
+                </div>
+              )}
             </div>
           )}
           </>
         )}
 
         </div>
+        {toast && (
+          <div style={{
+            position: "absolute", bottom: 78, left: "50%", transform: "translateX(-50%)",
+            background: ink, color: "#fff", fontFamily: "'DM Sans', sans-serif",
+            fontSize: 13, fontWeight: 600, padding: "10px 18px", borderRadius: 999,
+            boxShadow: "0 8px 20px rgba(26,8,0,0.25)", zIndex: 200, whiteSpace: "nowrap",
+            pointerEvents: "none",
+          }}>
+            {toast}
+          </div>
+        )}
         <BottomNav tab={tab} onChange={setTab} />
         <DetailSheet
           order={detail}
