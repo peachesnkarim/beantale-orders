@@ -347,7 +347,7 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
 
             <div style={{ height: 20 }} />
 
-            {!isPacked && (
+            {!isPacked ? (
               <>
                 <button
                   onClick={() => onMark(order.id)}
@@ -371,6 +371,18 @@ function DetailSheet({ order, onClose, onMark, onEdit, onDelete, isDesktop }) {
                   PACK PARTIALLY
                 </button>
               </>
+            ) : (
+              <button
+                onClick={() => setPacking(true)}
+                style={{
+                  width: "100%", padding: "12px 0", background: "transparent",
+                  border: `1.5px solid ${border}`, borderRadius: 10, color: ink,
+                  fontFamily: "'DM Sans', sans-serif", fontWeight: 600, fontSize: 12,
+                  letterSpacing: "0.06em", cursor: "pointer",
+                }}
+              >
+                EDIT PACKED QUANTITIES
+              </button>
             )}
 
             <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
@@ -444,6 +456,7 @@ export default function App() {
   // New order form
   const [form, setForm]       = useState(emptyForm());
   const [editId, setEditId]   = useState(null);
+  const [prevTab, setPrevTab] = useState("open");
   const [custDrop, setCustDrop] = useState(false);
   const custRef = useRef(null);
 
@@ -506,7 +519,9 @@ export default function App() {
       setOrders(p => p.map(o => o.id === editId
         ? { ...o, customer: form.customer, items: active, notes: form.notes }
         : o));
+      setForm(emptyForm());
       setEditId(null);
+      setTab(prevTab);
     } else {
       const order = {
         id: uid(),
@@ -517,9 +532,9 @@ export default function App() {
         status: "open",
       };
       setOrders(p => [order, ...p]);
+      setForm(emptyForm());
+      setTab("open");
     }
-    setForm(emptyForm());
-    setTab("open");
   };
 
   const startEdit = order => {
@@ -532,6 +547,7 @@ export default function App() {
       notes: order.notes || "",
     });
     setEditId(order.id);
+    setPrevTab(order.status === "packed" ? "packed" : "open");
     setDetail(null);
     setTab("new");
   };
@@ -685,7 +701,12 @@ export default function App() {
               <div style={{ marginBottom: 2 }}><Logo /></div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 26, fontWeight: 700, color: ink }}>{editId ? "Edit Order" : "New Order"}</div>
-                <button onClick={() => { setForm(emptyForm()); setEditId(null); }} style={{
+                <button onClick={() => {
+                  const wasEditing = !!editId;
+                  setForm(emptyForm());
+                  setEditId(null);
+                  if (wasEditing) setTab(prevTab);
+                }} style={{
                   background: "none", border: "none", fontSize: 24,
                   cursor: "pointer", color: muted, lineHeight: 1, padding: 4,
                 }}>×</button>
