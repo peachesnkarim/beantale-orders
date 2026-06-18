@@ -248,12 +248,7 @@ function Logo({ onClick }) {
       onClick={onClick}
       style={{ display: "inline-flex", alignItems: "center", gap: 7, cursor: onClick ? "pointer" : "default" }}
     >
-      <svg width="18" height="18" viewBox="0 0 100 100" style={{ flexShrink: 0 }}>
-        <g fill={ink}>
-          <path d="M52 50 C22 50 8 28 24 6 C48 20 52 36 52 50 Z" />
-          <circle cx="74" cy="74" r="18" />
-        </g>
-      </svg>
+      <img src="/logo-mark.png" alt="" width={20} height={20} style={{ flexShrink: 0, display: "block" }} />
       <span style={{ fontSize: 15, color: ink, fontFamily: "'DM Sans', sans-serif", fontWeight: 600, letterSpacing: "0" }}>beantale</span>
     </span>
   );
